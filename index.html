@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>TKJL9 BLE 只读诊断台 V0.2</title>
+<style>
+:root{font-family:system-ui,-apple-system,"PingFang SC",sans-serif;color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#071422;color:#eef6ff;line-height:1.55}main{max-width:800px;margin:auto;padding:22px 16px 58px}h1{font-size:26px;margin:2px 0 4px}h2{font-size:17px;margin:0 0 12px}.small{font-size:12px;color:#abc1d2}.sub{font-size:14px;color:#b4c8d7;margin:0 0 20px}.card{border:1px solid #314b63;background:#10263b;border-radius:15px;padding:17px;margin:13px 0}.status{padding:13px;border-radius:11px;border:1px solid #3c6b7f;background:#153344;white-space:pre-wrap;font-size:14px;margin:12px 0}.status.error{border-color:#a75e4c;background:#492b30}.status.success{border-color:#277f5d;background:#113b32}button{appearance:none;border:0;border-radius:12px;padding:14px 17px;font-weight:700;font-size:15px;background:#71dfd2;color:#072a2c;cursor:pointer;margin:3px 5px 3px 0}button.secondary{background:#29465d;color:#edf7ff}button:disabled{opacity:.45;cursor:not-allowed}.data{display:grid;grid-template-columns:140px 1fr;gap:8px 10px;font-size:14px}.data dt{color:#9fb9cb}.data dd{margin:0;font-family:ui-monospace,monospace;overflow-wrap:anywhere}.ok{color:#90f1ba}.bad{color:#ffb39b}.warn{color:#ffe0a1}#logs{max-height:330px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.65 ui-monospace,Consolas,monospace;background:#071524;padding:14px;border:1px solid #31506c;border-radius:10px;min-height:100px}ol{padding-left:23px}li{margin:7px 0}.pill{display:inline-block;border-radius:100px;background:#1b3d51;color:#9aebdf;padding:4px 10px;font-size:11px;font-weight:700;margin-bottom:9px}a{color:#7dd7fa}strong{color:#fff}
+</style>
+</head>
+<body><main>
+<div class="pill">V0.2 · 不发送应用层命令</div>
+<h1>特蓝精灵 · 蓝牙只读诊断台</h1>
+<p class="sub">目标设备 TKJL9-F410 · BLE FFF0 / FFF1 · 只订阅通知，不发送 A0 / A8 / E1，也不控制车辆。</p>
+<section class="card"><h2>① 环境诊断</h2>
+<dl class="data"><dt>当前页面协议</dt><dd id="protocol">检测中…</dd><dt>安全环境</dt><dd id="secure">检测中…</dd><dt>Web Bluetooth</dt><dd id="webble">检测中…</dd><dt>浏览器</dt><dd id="browser">检测中…</dd><dt>蓝牙可用性</dt><dd id="availability">待检测</dd></dl>
+<button class="secondary" id="check" type="button">重新检测浏览器</button>
+<div class="status" id="status" role="status" aria-live="polite">页面已加载，准备检测。若此行一直不变，说明网页的 JavaScript 没有执行。</div>
+<noscript><p class="bad">浏览器未启用 JavaScript，无法进行 Web Bluetooth 操作。</p></noscript>
+</section>
+<section class="card"><h2>② 连接并监听</h2>
+<button id="connect" type="button">连接 TKJL9</button><button class="secondary" id="disconnect" type="button" disabled>断开</button>
+<p class="small">点击连接后，正常情况下会弹出 Chrome 的蓝牙设备选择框。若不弹出，请查看上面的错误提示及下方日志。此工具不会主动发送设备查询或控制指令。</p>
+<dl class="data"><dt>已连接设备</dt><dd id="name">—</dd><dt>订阅状态</dt><dd id="notify">未订阅</dd><dt>接收通知次数</dt><dd id="count">0</dd></dl>
+</section>
+<section class="card"><h2>③ 运行日志</h2><div id="logs" aria-live="off">等待操作…</div>
+<button class="secondary" id="copylog" type="button">复制日志</button><button class="secondary" id="clear" type="button">清空日志</button>
+<p class="small">日志只保存在当前页面。复制前检查是否有敏感信息。关闭页面后不保存。</p>
+</section>
+<section class="card"><h2>如果点连接没反应</h2>
+<ol><li>检查当前网址是否以 <strong>https://</strong> 开头；<strong>ChatGPT 预览、微信内部浏览器或直接打开下载文件</strong>可能无法访问 Web Bluetooth。</li><li>复制部署后的 HTTPS 地址，手动粘贴到<strong>手机 Chrome 的地址栏</strong>打开，不要在 App 内预览。</li><li>确认手机蓝牙已开启、浏览器允许附近设备权限，并先断开 nRF Connect 对 TKJL9 的连接。</li><li>如果能连接但通知次数一直为零，也可能完全正常：FFF1 不支持 Read，模块可能仅在收到原版小程序查询后才回复。</li></ol>
+<p class="small">车辆停稳挂 P 挡时测试。当前软件仅订阅通知，不读取、写入车辆控制配置，不刷固件。</p>
+</section>
+</main>
+<script>
+'use strict';
+const SERVICE='0000fff0-0000-1000-8000-00805f9b34fb';
+const CHARACTERISTIC='0000fff1-0000-1000-8000-00805f9b34fb';
+const $=id=>document.getElementById(id);
+let dev=null,chr=null,connecting=false,notifications=0,logLines=[];
+function msg(s,isError=false,isSuccess=false){const e=$('status');e.textContent=s;e.className='status'+(isError?' error':isSuccess?' success':'');}
+function log(s){const row=`${new Date().toLocaleTimeString('zh-CN',{hour12:false})}  ${s}`;logLines.push(row);if(logLines.length>250)logLines.shift();$('logs').textContent=logLines.join('\n');$('logs').scrollTop=$('logs').scrollHeight;}
+function buttons(){const active=!!dev?.gatt?.connected;$('connect').disabled=connecting||active;$('disconnect').disabled=!active;}
+function info(){const url=location.protocol+'//'+location.host;$('protocol').textContent=url;$('secure').innerHTML=window.isSecureContext?'<span class="ok">是 ✓</span>':'<span class="bad">否 ✗（建议 HTTPS）</span>';$('webble').innerHTML=('bluetooth' in navigator)?'<span class="ok">存在 ✓</span>':'<span class="bad">不可用 ✗</span>';
+const ua=navigator.userAgent;let name=/CriOS/i.test(ua)?'iOS Chrome（有限制）':/EdgA/i.test(ua)?'Android Edge':/Chrome\//i.test(ua)?'Chrome / Chromium':/Firefox/i.test(ua)?'Firefox':/MicroMessenger/i.test(ua)?'微信内置浏览器':'其他浏览器';$('browser').textContent=name;
+if(!window.isSecureContext){msg('当前页面不是安全环境。请通过 Chrome 打开部署到 HTTPS 的 index.html。',true)} else if(!('bluetooth' in navigator)){msg('当前浏览器没有 Web Bluetooth。请在 Android Chrome 的地址栏打开 HTTPS 页面，而不是 App 内预览。',true)}else{msg('环境基础检测通过。点击「连接 TKJL9」，应出现系统蓝牙选择框。',false,true)}
+log('检测：协议 '+location.protocol+' / secure='+window.isSecureContext+' / WebBluetooth='+('bluetooth' in navigator));}
+async function check(){info();if(navigator.bluetooth && typeof navigator.bluetooth.getAvailability==='function'){try{const yes=await navigator.bluetooth.getAvailability();$('availability').textContent=yes?'可用（已检测）':'不可用或被系统/权限阻止';log('蓝牙可用性：'+yes)}catch(e){$('availability').textContent=e.name+': '+e.message;log('可用性查询失败 '+e.name+' '+e.message)}}else{$('availability').textContent='浏览器未提供可用性检测接口';}}
+function onNotify(e){const v=e.target.value;if(!v)return;const b=new Uint8Array(v.buffer,v.byteOffset,v.byteLength);const hex=Array.from(b,x=>x.toString(16).padStart(2,'0').toUpperCase()).join(' ');notifications++;$('count').textContent=String(notifications);log('NOTIFY ['+b.length+' bytes]: '+hex+(b.length>=3&&b[0]===0x55&&b[1]===0x7f?' (类型 0x'+b[2].toString(16).padStart(2,'0').toUpperCase()+')':''));}
+function disconnected(){if(chr)try{chr.removeEventListener('characteristicvaluechanged',onNotify)}catch(e){}chr=null;$('notify').textContent='已断开';msg('蓝牙已断开。');log('设备已断开');buttons();}
+async function connect(){
+msg('已收到点击操作，正在检查连接条件…');log('用户点击「连接 TKJL9」');
+if(!window.isSecureContext){msg('无法启动设备选择：该页面不是安全环境。请用 Android Chrome 打开 HTTPS 网页。',true);log('阻止：insecure context');return;}
+if(!('bluetooth' in navigator)){msg('无法启动设备选择：浏览器未提供 Web Bluetooth。请用 Android Chrome 打开 HTTPS 网页。',true);log('阻止：navigator.bluetooth 不存在');return;}
+connecting=true;buttons();
+try{
+msg('正在请求蓝牙设备…请查看是否弹出系统设备选择框。');
+// requestDevice is called directly during the button interaction; no BLE write operations.
+dev=await navigator.bluetooth.requestDevice({filters:[{namePrefix:'TKJL9'}],optionalServices:[SERVICE]});
+$('name').textContent=dev.name||'未命名设备';dev.addEventListener('gattserverdisconnected',disconnected);
+log('选择设备：'+(dev.name||'(无名称)'));msg('设备已选择，正在连接 GATT…');
+const server=await dev.gatt.connect();log('GATT 已连接');
+const svc=await server.getPrimaryService(SERVICE);log('找到服务 FFF0');
+chr=await svc.getCharacteristic(CHARACTERISTIC);log('找到特征 FFF1，notify='+chr.properties.notify);
+if(!chr.properties.notify)throw new Error('FFF1 不支持 Notify');
+chr.addEventListener('characteristicvaluechanged',onNotify);await chr.startNotifications();
+$('notify').textContent='订阅成功';msg('连接成功，已订阅 Notify。若没有收到数据，可能是设备不主动发送。',false,true);log('Notify 订阅成功；未发送任何应用层命令。');
+}catch(e){msg('连接失败：'+(e.name||'Error')+' — '+(e.message||String(e)),true);log('失败 '+(e.name||'Error')+' '+(e.message||String(e)));if(dev?.gatt?.connected)try{dev.gatt.disconnect()}catch(_){} }
+finally{connecting=false;buttons();}
+}
+$('check').addEventListener('click',()=>{void check()});$('connect').addEventListener('click',()=>{void connect()});$('disconnect').addEventListener('click',()=>{if(dev?.gatt?.connected)dev.gatt.disconnect();});
+$('clear').addEventListener('click',()=>{logLines=[];$('logs').textContent='日志已清空';});
+$('copylog').addEventListener('click',async()=>{try{await navigator.clipboard.writeText(logLines.join('\n'));msg('日志已复制到剪贴板。',false,true)}catch(e){msg('复制失败：'+e.message,true);}});
+window.addEventListener('error',e=>{msg('页面脚本错误：'+e.message,true);log('JS ERR '+e.message)});
+void check();
+</script></body></html>
